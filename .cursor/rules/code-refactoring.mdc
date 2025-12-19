@@ -1,0 +1,844 @@
+---
+alwaysApply: false
+---
+
+# Go 代码重构规则
+
+## 1. 重构原则
+
+### 1.1 核心原则
+- **小步前进**：每次只做一个小的改变，确保测试通过后再继续
+- **保持功能不变**：重构不改变外部行为，只改善内部结构
+- **先写测试**：在重构前确保有完善的单元测试覆盖
+- **持续测试**：每次修改后立即运行测试
+- **可读性优先**：代码应该易于理解和维护
+
+### 1.2 何时重构
+- 代码重复（DRY 原则）
+- 函数过长（超过 50 行）
+- 参数过多（超过 5 个）
+- 嵌套过深（超过 4 层）
+- 命名不清晰
+- 职责不单一
+- 性能问题
+
+## 2. 代码坏味道识别
+
+### 2.1 复杂度问题
+```go
+// ❌ 坏味道：嵌套的字符串分割
+ua = strings.Split(strings.Split(strings.Split(
+    strings.Split(strings.Split(ua, "A")[0], "B")[0], "C")[0], "D")[0], "E")[0]
+
+// ✅ 重构后：使用循环或专门的函数
+func cleanUA(ua string, markers []string) string {
+    result := ua
+    for _, marker := range markers {
+        result = strings.Split(result, marker)[0]
+    }
+    return result
+}
+```
+
+### 2.2 魔法数字和字符串
+```go
+// ❌ 坏味道：硬编码的魔法字符串
+if status == "active" && type == "premium" {
+    // ...
+}
+
+// ✅ 重构后：使用常量
+const (
+    StatusActive = "active"
+    TypePremium  = "premium"
+)
+
+if status == StatusActive && userType == TypePremium {
+    // ...
+}
+```
+
+### 2.3 长函数
+```go
+// ❌ 坏味道：函数做太多事情
+func ProcessUser(user *User) error {
+    // 验证用户（10 行）
+    // 保存到数据库（15 行）
+    // 发送邮件（20 行）
+    // 更新缓存（10 行）
+    // 记录日志（5 行）
+}
+
+// ✅ 重构后：拆分为多个函数
+func ProcessUser(user *User) error {
+    if err := validateUser(user); err != nil {
+        return err
+    }
+    if err := saveUser(user); err != nil {
+        return err
+    }
+    if err := notifyUser(user); err != nil {
+        return err
+    }
+    updateCache(user)
+    logUserProcessing(user)
+    return nil
+}
+```
+
+## 3. 常见重构模式
+
+### 3.1 提取函数（Extract Function）
+将代码片段提取到独立的函数中：
+
+```go
+// 重构前
+func CalculateTotal(items []Item) float64 {
+    total := 0.0
+    for _, item := range items {
+        total += item.Price * item.Quantity
+        if item.Discount > 0 {
+            total -= item.Price * item.Quantity * item.Discount
+        }
+    }
+    return total
+}
+
+// 重构后
+func CalculateTotal(items []Item) float64 {
+    total := 0.0
+    for _, item := range items {
+        total += calculateItemTotal(item)
+    }
+    return total
+}
+
+func calculateItemTotal(item Item) float64 {
+    subtotal := item.Price * item.Quantity
+    if item.Discount > 0 {
+        subtotal -= subtotal * item.Discount
+    }
+    return subtotal
+}
+```
+
+### 3.2 引入参数对象（Introduce Parameter Object）
+将多个参数组合成一个对象：
+
+```go
+// 重构前
+func CreateUser(name, email, phone, address, city, country string, age int) error {
+    // ...
+}
+
+// 重构后
+type UserInfo struct {
+    Name    string
+    Email   string
+    Phone   string
+    Address string
+    City    string
+    Country string
+    Age     int
+}
+
+func CreateUser(info UserInfo) error {
+    // ...
+}
+```
+
+### 3.3 用多态替换条件表达式
+```go
+// 重构前
+func Calculate(t string, amount float64) float64 {
+    switch t {
+    case "discount":
+        return amount * 0.9
+    case "tax":
+        return amount * 1.1
+    case "premium":
+        return amount * 1.2
+    default:
+        return amount
+    }
+}
+
+// 重构后
+type PriceCalculator interface {
+    Calculate(amount float64) float64
+}
+
+type DiscountCalculator struct{}
+func (d DiscountCalculator) Calculate(amount float64) float64 {
+    return amount * 0.9
+}
+
+type TaxCalculator struct{}
+func (t TaxCalculator) Calculate(amount float64) float64 {
+    return amount * 1.1
+}
+
+type PremiumCalculator struct{}
+func (p PremiumCalculator) Calculate(amount float64) float64 {
+    return amount * 1.2
+}
+```
+
+### 3.4 简化条件表达式
+```go
+// 重构前
+func IsEligible(user *User) bool {
+    if user.Age >= 18 && user.Status == "active" && user.Balance > 0 {
+        return true
+    }
+    return false
+}
+
+// 重构后
+func IsEligible(user *User) bool {
+    return user.Age >= 18 && 
+           user.Status == "active" && 
+           user.Balance > 0
+}
+
+// 或者更清晰的版本
+func IsEligible(user *User) bool {
+    return isAdult(user) && 
+           isActive(user) && 
+           hasFunds(user)
+}
+
+func isAdult(user *User) bool { return user.Age >= 18 }
+func isActive(user *User) bool { return user.Status == "active" }
+func hasFunds(user *User) bool { return user.Balance > 0 }
+```
+
+### 3.5 移除重复代码
+```go
+// 重构前
+func ProcessOrders() {
+    db.Connect()
+    defer db.Close()
+    // 处理订单
+}
+
+func ProcessUsers() {
+    db.Connect()
+    defer db.Close()
+    // 处理用户
+}
+
+// 重构后
+func withDatabase(fn func() error) error {
+    db.Connect()
+    defer db.Close()
+    return fn()
+}
+
+func ProcessOrders() error {
+    return withDatabase(func() error {
+        // 处理订单
+        return nil
+    })
+}
+
+func ProcessUsers() error {
+    return withDatabase(func() error {
+        // 处理用户
+        return nil
+    })
+}
+```
+
+## 4. Go 特定重构
+
+### 4.1 使用 defer 简化资源管理
+```go
+// 重构前
+func ReadFile(path string) ([]byte, error) {
+    f, err := os.Open(path)
+    if err != nil {
+        return nil, err
+    }
+    data, err := io.ReadAll(f)
+    if err != nil {
+        f.Close()
+        return nil, err
+    }
+    f.Close()
+    return data, nil
+}
+
+// 重构后
+func ReadFile(path string) ([]byte, error) {
+    f, err := os.Open(path)
+    if err != nil {
+        return nil, err
+    }
+    defer f.Close()
+    return io.ReadAll(f)
+}
+```
+
+### 4.2 使用接口提高可测试性
+```go
+// 重构前
+type UserService struct {
+    db *sql.DB
+}
+
+func (s *UserService) GetUser(id int) (*User, error) {
+    // 直接操作数据库
+}
+
+// 重构后
+type UserRepository interface {
+    GetUser(id int) (*User, error)
+    SaveUser(user *User) error
+}
+
+type UserService struct {
+    repo UserRepository
+}
+
+func (s *UserService) GetUser(id int) (*User, error) {
+    return s.repo.GetUser(id)
+}
+```
+
+### 4.3 使用 context 传递上下文
+```go
+// 重构前
+func FetchData(url string) ([]byte, error) {
+    resp, err := http.Get(url)
+    // ...
+}
+
+// 重构后
+func FetchData(ctx context.Context, url string) ([]byte, error) {
+    req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
+    if err != nil {
+        return nil, err
+    }
+    resp, err := http.DefaultClient.Do(req)
+    // ...
+}
+```
+
+### 4.4 使用错误包装提供更多上下文
+```go
+// 重构前
+func ProcessFile(path string) error {
+    data, err := os.ReadFile(path)
+    if err != nil {
+        return err
+    }
+    // ...
+}
+
+// 重构后
+import "fmt"
+
+func ProcessFile(path string) error {
+    data, err := os.ReadFile(path)
+    if err != nil {
+        return fmt.Errorf("failed to read file %s: %w", path, err)
+    }
+    // ...
+}
+```
+
+### 4.5 使用切片和 map 的零值特性
+```go
+// 重构前
+func CollectItems() []string {
+    items := []string{}
+    for _, item := range source {
+        items = append(items, item)
+    }
+    return items
+}
+
+// 重构后
+func CollectItems() []string {
+    var items []string  // 零值已经是空切片
+    for _, item := range source {
+        items = append(items, item)
+    }
+    return items
+}
+```
+
+## 5. 性能重构
+
+### 5.1 避免不必要的内存分配
+```go
+// 重构前
+func ConcatStrings(strs []string) string {
+    result := ""
+    for _, s := range strs {
+        result += s  // 每次都创建新字符串
+    }
+    return result
+}
+
+// 重构后
+func ConcatStrings(strs []string) string {
+    var builder strings.Builder
+    for _, s := range strs {
+        builder.WriteString(s)
+    }
+    return builder.String()
+}
+```
+
+### 5.2 使用指针减少复制
+```go
+// 重构前
+func ProcessLargeStruct(data LargeStruct) LargeStruct {
+    // 值传递，会复制整个结构体
+    data.Field = "modified"
+    return data
+}
+
+// 重构后
+func ProcessLargeStruct(data *LargeStruct) {
+    // 指针传递，避免复制
+    data.Field = "modified"
+}
+```
+
+### 5.3 预分配切片容量
+```go
+// 重构前
+func CreateItems(n int) []Item {
+    var items []Item
+    for i := 0; i < n; i++ {
+        items = append(items, Item{ID: i})
+    }
+    return items
+}
+
+// 重构后
+func CreateItems(n int) []Item {
+    items := make([]Item, 0, n)  // 预分配容量
+    for i := 0; i < n; i++ {
+        items = append(items, Item{ID: i})
+    }
+    return items
+}
+```
+
+### 5.4 使用 sync.Pool 复用对象
+```go
+// 重构后：对于频繁创建的临时对象
+var bufferPool = sync.Pool{
+    New: func() interface{} {
+        return new(bytes.Buffer)
+    },
+}
+
+func ProcessData(data []byte) []byte {
+    buf := bufferPool.Get().(*bytes.Buffer)
+    defer func() {
+        buf.Reset()
+        bufferPool.Put(buf)
+    }()
+    
+    // 使用 buffer
+    buf.Write(data)
+    return buf.Bytes()
+}
+```
+
+## 6. 错误处理重构
+
+### 6.1 统一错误处理
+```go
+// 重构前
+func Process() {
+    if err := step1(); err != nil {
+        log.Printf("step1 failed: %v", err)
+        return
+    }
+    if err := step2(); err != nil {
+        log.Printf("step2 failed: %v", err)
+        return
+    }
+    if err := step3(); err != nil {
+        log.Printf("step3 failed: %v", err)
+        return
+    }
+}
+
+// 重构后
+func Process() error {
+    steps := []struct {
+        name string
+        fn   func() error
+    }{
+        {"step1", step1},
+        {"step2", step2},
+        {"step3", step3},
+    }
+    
+    for _, step := range steps {
+        if err := step.fn(); err != nil {
+            return fmt.Errorf("%s failed: %w", step.name, err)
+        }
+    }
+    return nil
+}
+```
+
+### 6.2 自定义错误类型
+```go
+// 重构前
+func ValidateUser(user *User) error {
+    if user.Age < 18 {
+        return errors.New("user too young")
+    }
+    return nil
+}
+
+// 重构后
+type ValidationError struct {
+    Field   string
+    Message string
+}
+
+func (e *ValidationError) Error() string {
+    return fmt.Sprintf("%s: %s", e.Field, e.Message)
+}
+
+func ValidateUser(user *User) error {
+    if user.Age < 18 {
+        return &ValidationError{
+            Field:   "Age",
+            Message: "must be at least 18",
+        }
+    }
+    return nil
+}
+```
+
+## 7. 并发重构
+
+### 7.1 使用 errgroup 处理并发错误
+```go
+import "golang.org/x/sync/errgroup"
+
+// 重构后
+func ProcessBatch(items []Item) error {
+    g := new(errgroup.Group)
+    
+    for _, item := range items {
+        item := item  // 避免闭包问题
+        g.Go(func() error {
+            return processItem(item)
+        })
+    }
+    
+    return g.Wait()
+}
+```
+
+### 7.2 使用 context 控制 goroutine
+```go
+// 重构后
+func Worker(ctx context.Context) error {
+    for {
+        select {
+        case <-ctx.Done():
+            return ctx.Err()
+        default:
+            // 执行工作
+            if err := doWork(); err != nil {
+                return err
+            }
+        }
+    }
+}
+```
+
+## 8. 命名重构
+
+### 8.1 使用清晰的命名
+```go
+// 重构前
+func proc(d []byte) ([]byte, error) {
+    // ...
+}
+
+// 重构后
+func ProcessUserData(data []byte) ([]byte, error) {
+    // ...
+}
+```
+
+### 8.2 遵循 Go 命名约定
+```go
+// ❌ 不推荐
+func GetUserByID(userID int) (*User, error)
+func HTTPServer() *Server
+func URLPath() string
+
+// ✅ 推荐
+func UserByID(userID int) (*User, error)  // 或 func GetUserByID
+func HTTPServer() *Server                  // HTTP 是缩写，保持大写
+func URLPath() string                      // URL 是缩写，保持大写
+```
+
+## 9. 结构重构
+
+### 9.1 使用组合而非继承
+```go
+// 重构后：使用组合
+type Logger struct {
+    prefix string
+}
+
+func (l *Logger) Log(msg string) {
+    fmt.Printf("[%s] %s\n", l.prefix, msg)
+}
+
+type Service struct {
+    logger *Logger  // 组合
+    db     *Database
+}
+
+func (s *Service) Process() {
+    s.logger.Log("processing...")
+}
+```
+
+### 9.2 使用选项模式
+```go
+// 重构前
+func NewServer(addr string, timeout int, maxConn int, logger *Logger) *Server {
+    // ...
+}
+
+// 重构后
+type ServerOption func(*Server)
+
+func WithTimeout(timeout time.Duration) ServerOption {
+    return func(s *Server) {
+        s.timeout = timeout
+    }
+}
+
+func WithMaxConnections(max int) ServerOption {
+    return func(s *Server) {
+        s.maxConn = max
+    }
+}
+
+func NewServer(addr string, opts ...ServerOption) *Server {
+    s := &Server{addr: addr}
+    for _, opt := range opts {
+        opt(s)
+    }
+    return s
+}
+
+// 使用
+server := NewServer("localhost:8080",
+    WithTimeout(30*time.Second),
+    WithMaxConnections(100),
+)
+```
+
+## 10. 测试相关重构
+
+### 10.1 提高可测试性
+```go
+// 重构前：难以测试
+func SendEmail(to, subject, body string) error {
+    // 直接发送邮件
+    return smtp.SendMail("smtp.example.com:25", nil, "from@example.com", []string{to}, []byte(body))
+}
+
+// 重构后：易于测试
+type EmailSender interface {
+    Send(to, subject, body string) error
+}
+
+type SMTPSender struct {
+    host string
+    from string
+}
+
+func (s *SMTPSender) Send(to, subject, body string) error {
+    return smtp.SendMail(s.host, nil, s.from, []string{to}, []byte(body))
+}
+
+// 在测试中可以使用 mock
+type MockSender struct {
+    SentEmails []string
+}
+
+func (m *MockSender) Send(to, subject, body string) error {
+    m.SentEmails = append(m.SentEmails, to)
+    return nil
+}
+```
+
+### 10.2 使用表驱动测试重构
+```go
+// 重构前：重复的测试代码
+func TestValidateEmail(t *testing.T) {
+    if !ValidateEmail("test@example.com") {
+        t.Error("should be valid")
+    }
+    if ValidateEmail("invalid") {
+        t.Error("should be invalid")
+    }
+    if ValidateEmail("") {
+        t.Error("should be invalid")
+    }
+}
+
+// 重构后：表驱动测试
+func TestValidateEmail(t *testing.T) {
+    tests := []struct {
+        name  string
+        email string
+        want  bool
+    }{
+        {"valid email", "test@example.com", true},
+        {"invalid format", "invalid", false},
+        {"empty string", "", false},
+        {"missing @", "testexample.com", false},
+        {"missing domain", "test@", false},
+    }
+    
+    for _, tt := range tests {
+        t.Run(tt.name, func(t *testing.T) {
+            got := ValidateEmail(tt.email)
+            if got != tt.want {
+                t.Errorf("ValidateEmail(%q) = %v, want %v", tt.email, got, tt.want)
+            }
+        })
+    }
+}
+```
+
+## 11. 重构工作流
+
+### 11.1 重构步骤
+1. **识别问题**：找出需要重构的代码
+2. **确保测试覆盖**：为现有代码编写测试
+3. **小步重构**：一次只做一个改变
+4. **运行测试**：每次修改后运行测试
+5. **提交代码**：每个小步骤后提交
+6. **重复**：继续下一个重构
+
+### 11.2 重构前检查清单
+- [ ] 是否有足够的单元测试覆盖？
+- [ ] 测试是否都能通过？
+- [ ] 是否理解代码的业务逻辑？
+- [ ] 是否有足够的时间完成重构？
+- [ ] 是否获得了团队的同意？
+- [ ] 是否有代码版本控制？
+- [ ] 是否在独立的分支上工作？
+
+### 11.3 重构后检查清单
+- [ ] 所有测试是否通过？
+- [ ] 代码覆盖率是否保持或提高？
+- [ ] 性能是否受到影响？
+- [ ] 是否有新的 linter 警告？
+- [ ] 代码是否更容易理解？
+- [ ] 是否需要更新文档？
+- [ ] 是否需要通知团队成员？
+
+## 12. 重构工具和技术
+
+### 12.1 静态分析工具
+```bash
+# golangci-lint - 综合的 linter
+golangci-lint run
+
+# go vet - 官方静态分析工具
+go vet ./...
+
+# staticcheck - 高级静态分析
+staticcheck ./...
+
+# gocyclo - 检查圈复杂度
+gocyclo -over 10 .
+
+# golint - 代码风格检查
+golint ./...
+```
+
+### 12.2 代码复杂度分析
+```bash
+# gocyclo - 圈复杂度
+gocyclo -over 15 -avg .
+
+# gocognit - 认知复杂度
+gocognit -over 15 .
+
+# 查找长函数
+golines -m 120 --base-formatter gofmt -w .
+```
+
+### 12.3 代码格式化
+```bash
+# gofmt - 标准格式化
+gofmt -w .
+
+# goimports - 自动管理导入
+goimports -w .
+
+# gofumpt - 更严格的格式化
+gofumpt -w .
+```
+
+### 12.4 依赖分析
+```bash
+# 查看依赖关系
+go mod graph
+
+# 清理未使用的依赖
+go mod tidy
+
+# 查看包的依赖
+go list -m all
+```
+
+## 13. 重构注意事项
+
+### 13.1 不要过度重构
+- ❌ 不要为了重构而重构
+- ❌ 不要过早优化
+- ❌ 不要一次改变太多
+- ✅ 只重构有问题的代码
+- ✅ 保持简单
+- ✅ 渐进式改进
+
+### 13.2 什么时候不应该重构
+- 代码即将被删除
+- 重写比重构更快
+- 临近发布截止日期
+- 没有足够的测试覆盖
+- 不理解业务逻辑
+
+### 13.3 重构的投资回报
+- 提高代码可读性
+- 减少技术债务
+- 提高开发效率
+- 降低维护成本
+- 提高代码质量
+
+## 14. 重构最佳实践总结
+
+1. **始终先写测试**：重构前确保有完善的测试覆盖
+2. **小步前进**：每次只做一个小改动
+3. **频繁提交**：每个小步骤后都提交代码
+4. **保持绿灯**：确保测试始终通过
+5. **代码审查**：让团队成员审查你的重构
+6. **文档更新**：更新相关文档和注释
+7. **性能监控**：关注重构对性能的影响
+8. **持续改进**：重构是持续的过程，不是一次性的
