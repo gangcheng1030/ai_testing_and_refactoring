@@ -255,4 +255,85 @@ func TestUnaryClientInterceptor(t *testing.T) {
 9. **错误处理测试** - 确保错误情况得到正确处理
 10. **临时文件清理** - 在任务最后需要将生成的临时文件删除，如：coverage.out, coverage.html
 
+## 9. 重要注意事项和约束
+
+### 9.1 源代码修改原则
+**⚠️ 严格禁止修改源代码**，除非满足以下条件之一：
+- 用户明确要求重构或修改源代码
+- 用户同时要求"测试驱动重构"或"提高可测试性"
+- 源代码存在明显的语法错误或编译错误
+
+**如果源代码难以测试，应该：**
+1. 先评估可测试性问题（如：硬编码依赖、缺少接口、全局变量等）
+2. 向用户报告问题并说明原因
+3. 提供两种方案：
+   - 方案A：在现有代码基础上编写测试（可能需要使用monkey等侵入式mock）
+   - 方案B：建议重构代码以提高可测试性（需要用户确认）
+4. 等待用户选择后再执行
+
+### 9.2 测试隔离性要求
+**测试必须完全独立，不依赖外部因素：**
+
+```go
+// ❌ 错误示例：依赖真实时间
+func TestExpiration(t *testing.T) {
+    item := NewItem()
+    time.Sleep(2 * time.Second)
+    assert.True(t, item.IsExpired()) // 不确定性测试
+}
+
+// ✅ 正确示例：时间作为参数传递
+func TestExpiration(t *testing.T) {
+    createdAt := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
+    checkAt := time.Date(2024, 1, 1, 0, 2, 0, 0, time.UTC)
+    item := NewItem(createdAt)
+    assert.True(t, item.IsExpiredAt(checkAt))
+}
+```
+
+**禁止依赖的外部因素：**
+- ❌ 系统当前时间（time.Now()）
+- ❌ 真实网络请求
+- ❌ 真实数据库连接
+- ❌ 文件系统状态（除非测试IO操作本身）
+- ❌ 环境变量（应该显式传递或mock）
+- ❌ 全局变量的外部修改
+- ❌ 随机数（应该使用固定seed或mock）
+
+### 9.3 Mock 使用优先级
+按优先级从高到低：
+
+1. **接口Mock（推荐）** - 最干净、最易维护
+```go
+type mockRedisClient struct {
+    getResult string
+    getError  error
+}
+func (m *mockRedisClient) Get(key string) (string, error) {
+    return m.getResult, m.getError
+}
+```
+
+2. **依赖注入** - 通过构造函数或setter注入mock对象
+3. **Monkey Patch（谨慎使用）** - 仅在无法使用接口时使用
+4. **全局变量替换（避免）** - 最后的手段
+
+### 9.4 测试覆盖率要求
+- **目标覆盖率**：≥ 90%
+- **必须覆盖**：所有公开的函数和方法
+- **重点覆盖**：
+  - 所有错误处理分支
+  - 边界条件（空值、零值、最大值、最小值）
+  - 核心业务逻辑
+  - 并发安全相关代码
+
+### 9.5 测试执行清单
+完成测试编写后，必须执行以下检查：
+
+- [ ] 所有测试通过：`go test -v ./...`
+- [ ] 覆盖率达标：`go test -cover ./...`
+- [ ] 代码格式化：`go fmt ./...`
+- [ ] 静态检查通过：`go vet ./...`
+- [ ] 清理临时文件：删除 `coverage.out`, `coverage.html` 等
+
 这些规则和模式确保了测试代码的一致性、可读性和可维护性，为项目提供了可靠的测试覆盖。
